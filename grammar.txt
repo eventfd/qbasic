@@ -1,0 +1,124 @@
+program         = { line } ;
+
+line            = [ line_number ] statement_list newline ;
+line_number     = integer ;
+statement_list  = statement { ":" statement } ;
+newline         = "\n" | "\r\n" ;
+
+statement =
+      assignment
+    | if_statement
+    | for_statement
+    | do_statement
+    | while_statement
+    | select_statement
+    | sub_decl
+    | function_decl
+    | call_statement
+    | goto_statement
+    | gosub_statement
+    | return_statement
+    | dim_statement
+    | print_statement
+    | input_statement
+    | end_statement
+    | rem_statement
+    ;
+
+assignment      = variable "=" expression ;
+
+variable        = identifier [ type_suffix ] [ "(" argument_list ")" ] ;
+type_suffix     = "$" | "%" | "&" | "!" | "#" ;
+
+expression      = logical_expr ;
+logical_expr    = relational_expr { ("AND" | "OR" | "XOR") relational_expr } ;
+relational_expr = additive_expr [ rel_op additive_expr ] ;
+rel_op          = "=" | "<>" | "<" | ">" | "<=" | ">=" ;
+additive_expr   = term { ("+" | "-") term } ;
+term            = factor { ("*" | "/" | "MOD") factor } ;
+
+factor =
+      number
+    | string
+    | variable
+    | "(" expression ")"
+    | ("NOT" | "-") factor
+    ;
+
+if_statement =
+    "IF" expression "THEN"
+        ( statement
+        | newline { statement } [ "ELSE" { statement } ] "END" "IF"
+        ) ;
+
+for_statement =
+    "FOR" identifier "=" expression "TO" expression
+    [ "STEP" expression ]
+    newline
+    { statement }
+    "NEXT" [ identifier ] ;
+
+do_statement =
+    "DO"
+    ( [ "WHILE" expression ] | [ "UNTIL" expression ] )
+    newline
+    { statement }
+    "LOOP"
+    ( [ "WHILE" expression ] | [ "UNTIL" expression ] ) ;
+
+while_statement =
+    "WHILE" expression
+    newline
+    { statement }
+    "WEND" ;
+
+select_statement =
+    "SELECT" "CASE" expression
+    newline
+    { case_block }
+    "END" "SELECT" ;
+
+case_block =
+    "CASE" ( expression | "ELSE" )
+    newline
+    { statement } ;
+
+sub_decl =
+    "SUB" identifier [ "(" parameter_list ")" ]
+    newline
+    { statement }
+    "END" "SUB" ;
+
+function_decl =
+    "FUNCTION" identifier [ "(" parameter_list ")" ]
+    newline
+    { statement }
+    "END" "FUNCTION" ;
+
+parameter_list  = parameter { "," parameter } ;
+parameter       = identifier [ type_suffix ] ;
+
+call_statement  = "CALL" identifier [ "(" argument_list ")" ] ;
+goto_statement  = "GOTO" ( identifier | integer ) ;
+gosub_statement = "GOSUB" ( identifier | integer ) ;
+return_statement= "RETURN" ;
+
+dim_statement   = "DIM" variable { "," variable } ;
+
+print_statement = "PRINT" [ expression { "," expression } ] ;
+input_statement = "INPUT" [ string ";" ] variable { "," variable } ;
+
+end_statement   = "END" ;
+rem_statement   = "REM" { character } ;
+
+argument_list   = expression { "," expression } ;
+
+identifier      = letter { letter | digit } ;
+number          = integer | float ;
+integer         = digit { digit } ;
+float           = digit { digit } "." digit { digit } ;
+string          = '"' { character } '"' ;
+
+letter          = "A"…"Z" | "a"…"z" ;
+digit           = "0"…"9" ;
+character       = ? any printable character ? ;
