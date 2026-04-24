@@ -1,17 +1,34 @@
 use crate::tokenizer::Span;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct StatementList(Vec<Statement>);
+pub struct Program {
+    pub lines: Vec<Line>,
+}
 
-impl From<Vec<Statement>> for StatementList {
-    fn from(value: Vec<Statement>) -> Self {
-        Self(value)
+impl Program {
+    pub fn new(lines: Vec<Line>) -> Self {
+        Self { lines }
     }
 }
 
-impl StatementList {
-    pub fn statements(&self) -> &[Statement] {
-        &self.0
+impl From<Vec<Line>> for Program {
+    fn from(lines: Vec<Line>) -> Self {
+        Self { lines }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Line {
+    pub line_no: Option<u32>,
+    pub statements: Vec<Statement>,
+}
+
+impl Line {
+    pub fn new(line_no: Option<u32>, statements: Vec<Statement>) -> Self {
+        Self {
+            line_no,
+            statements,
+        }
     }
 }
 

@@ -2,9 +2,10 @@ use std::io::Write;
 
 use crate::parser::ast::Expr;
 use crate::parser::ast::ExprKind;
+use crate::parser::ast::Line;
 use crate::parser::ast::PrintStatement;
+use crate::parser::ast::Program;
 use crate::parser::ast::Statement;
-use crate::parser::ast::StatementList;
 
 pub struct Evaluator<W> {
     writer: W,
@@ -21,9 +22,15 @@ impl<W: Write> Evaluator<W> {
         }
     }
 
-    pub fn eval_program(&mut self, stmts: StatementList) {
-        for e in stmts.statements() {
-            self.eval_statement(e);
+    fn eval_line(&mut self, line: &Line) {
+        for stmt in &line.statements {
+            self.eval_statement(stmt);
+        }
+    }
+
+    pub fn eval_program(&mut self, prog: &Program) {
+        for e in &prog.lines {
+            self.eval_line(e);
         }
     }
 

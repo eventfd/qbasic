@@ -5,9 +5,10 @@ use anyhow::Context;
 use crate::parser::ast::ArgList;
 use crate::parser::ast::Expr;
 use crate::parser::ast::ExprKind;
+use crate::parser::ast::Line;
 use crate::parser::ast::PrintStatement;
+use crate::parser::ast::Program;
 use crate::parser::ast::Statement;
-use crate::parser::ast::StatementList;
 use crate::tokenizer::Keyword;
 use crate::tokenizer::Token;
 use crate::tokenizer::TokenKind;
@@ -16,8 +17,8 @@ use crate::tokenizer::Tokenizer;
 #[derive(Debug, Clone)]
 pub struct Parser<'s> {
     tokenizer: Tokenizer<'s>,
-    curr: Option<Token>,
-    peek: Option<Token>,
+    curr: Token,
+    peek: Token,
 }
 
 pub type ParseError = anyhow::Error;
@@ -27,8 +28,8 @@ impl<'s> Parser<'s> {
     pub fn new(tokenizer: Tokenizer<'s>) -> Self {
         let mut p = Self {
             tokenizer,
-            curr: None,
-            peek: None,
+            curr: Token::new(TokenKind::Eof, Default::default()),
+            peek: Token::new(TokenKind::Eof, Default::default()),
         };
         p.bump();
         p.bump();
@@ -37,48 +38,53 @@ impl<'s> Parser<'s> {
 
     #[inline(always)]
     fn bump(&mut self) {
-        self.curr = self.peek.replace(self.tokenizer.next_token());
+        self.curr = self.peek;
+        self.peek = self.tokenizer.next_token();
     }
 
-    fn expect(&mut self, kind: TokenKind) -> ParseResult<()> {
-        match &self.curr {
-            Some(k) if k.kind == kind => {
-                self.bump();
-                Ok(())
-            }
-            _ => anyhow::bail!(
-                "Parser::expect(kind: {:?}) failed, got: {:?}",
-                kind,
-                self.curr
-            ),
+    fn expect(&mut self, expected: TokenKind) -> ParseResult<()> {
+        if self.curr.kind == expected {
+            self.bump();
+            Ok(())
+        } else {
+            anyhow::bail!(
+                "Parser::expect(kind: {:?}) failed - got {:?}",
+                expected,
+                &self.curr
+            )
         }
     }
 
+    #[inline(always)]
     fn is_eol(&self) -> bool {
-        self.curr
-            .as_ref()
-            .map(|t| {
-                matches!(
-                    t.kind,
-                    TokenKind::Eof | TokenKind::Semicolon | TokenKind::Eol
-                )
-            })
-            .unwrap_or_default()
+        matches!(
+            self.curr.kind,
+            TokenKind::Eof | TokenKind::Semicolon | TokenKind::Eol
+        )
     }
 
-    fn peek(&self, kind: TokenKind) -> bool {
-        self.curr
-            .as_ref()
-            .map(|t| t.kind == kind)
-            .unwrap_or_default()
-    }
-
-    pub fn parse(&mut self) -> ParseResult<StatementList> {
-        let mut stmts = vec![];
-        while let Ok(stmt) = self.parse_statement() {
-            stmts.push(stmt);
+    pub fn parse(&mut self) -> ParseResult<Program> {
+        let mut rv = vec![];
+        while let Ok(line) = self.parse_line() {
+            rv.push(line);
         }
-        Ok(stmts.into())
+        Ok(rv.into())
+    }
+
+    pub fn parse_line(&mut self) -> ParseResult<Line> {
+        let line_no = if self.curr.kind == TokenKind::Int64 {
+            let val = self.parse_int()?.try_into()?;
+            self.bump();
+            Some(val)
+        } else {
+            None
+        };
+        let mut stmts = vec![self.parse_statement()?];
+        while self.curr.kind == TokenKind::Colon {
+            self.bump();
+            stmts.push(self.parse_statement()?);
+        }
+        Ok(Line::new(line_no, stmts))
     }
 
     pub fn parse_statement(&mut self) -> ParseResult<Statement> {
@@ -91,23 +97,28 @@ impl<'s> Parser<'s> {
             return Ok(ArgList::new(vec![]));
         }
         let mut args = vec![self.parse_expr()?];
-        while self.expect(TokenKind::Comma).is_ok() {
+        while self.curr.kind == TokenKind::Comma {
+            self.bump();
             let expr = self.parse_expr().context("Expected Expression")?;
             args.push(expr);
         }
         Ok(args.into())
     }
 
+    fn parse_int(&self) -> ParseResult<i64> {
+        let view = self.tokenizer.span_of(self.curr.span);
+        let text = core::str::from_utf8(view).context(
+            "Parser::parse_expr failed to decode integer from bytes",
+        )?;
+        text.parse().context("str::parse() failed")
+    }
+
     fn parse_expr(&mut self) -> ParseResult<Expr> {
-        if self.peek(TokenKind::Int64)
-            && let Some(curr) = &self.curr
-        {
-            let span = curr.span;
+        if self.curr.kind == TokenKind::Int64 {
+            let val =
+                Expr::new(self.curr.span, ExprKind::Int64(self.parse_int()?));
             self.bump();
-            let view = self.tokenizer.span_of(span);
-            let text = core::str::from_utf8(view)
-                .context("Parser::parse_expr failed to decode integer from bytes")?;
-            return Ok(Expr::new(span, ExprKind::Int64(text.parse()?)));
+            return Ok(val);
         }
         anyhow::bail!("Not Implemented")
     }
@@ -121,7 +132,9 @@ mod tests {
         use crate::parser::ast::ArgList;
         use crate::parser::ast::Expr;
         use crate::parser::ast::ExprKind;
+        use crate::parser::ast::Line;
         use crate::parser::ast::PrintStatement;
+        use crate::parser::ast::Program;
         use crate::parser::ast::Statement;
         use crate::tokenizer::Span;
         use crate::tokenizer::Tokenizer;
@@ -133,30 +146,36 @@ mod tests {
             let mut parser = Parser::new(lexer);
             let ast = parser.parse().expect("parse() errors");
             assert_eq!(
-                ast.statements(),
-                vec![Statement::Print(PrintStatement::new(vec![].into()))]
+                ast,
+                Program::new(vec![Line::new(
+                    None,
+                    vec![Statement::Print(PrintStatement::new(vec![].into()))]
+                )],)
             );
             let mut stdout = Vec::<u8>::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(ast);
+            eval.eval_program(&ast);
             assert_eq!(stdout, b"\n");
         }
 
         #[test]
         fn test_one_arg() {
-            let text = b"PRINT 123\n";
+            let text = b"10 PRINT 123\n";
             let lexer = Tokenizer::new(text);
             let mut parser = Parser::new(lexer);
             let ast = parser.parse().expect("parse() errors");
             assert_eq!(
-                ast.statements(),
-                vec![Statement::Print(PrintStatement::new(ArgList::new(vec![
-                    Expr::new(Span::new(6, 3), ExprKind::Int64(123))
-                ])))]
+                ast,
+                Program::new(vec![Line::new(
+                    Some(10),
+                    vec![Statement::Print(PrintStatement::new(ArgList::new(
+                        vec![Expr::new(Span::new(9, 3), ExprKind::Int64(123))]
+                    )))]
+                )])
             );
             let mut stdout = Vec::<u8>::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(ast);
+            eval.eval_program(&ast);
             assert_eq!(stdout, b"123\n");
         }
 
@@ -167,17 +186,63 @@ mod tests {
             let mut parser = Parser::new(lexer);
             let ast = parser.parse().expect("parse() errors");
             assert_eq!(
-                ast.statements(),
-                vec![Statement::Print(PrintStatement::new(ArgList::new(vec![
-                    Expr::new(Span::new(6, 3), ExprKind::Int64(123)),
-                    Expr::new(Span::new(11, 4), ExprKind::Int64(4567)),
-                    Expr::new(Span::new(17, 8), ExprKind::Int64(89101112)),
-                ])))]
+                ast,
+                Program::new(vec![Line::new(
+                    None,
+                    vec![Statement::Print(PrintStatement::new(ArgList::new(
+                        vec![
+                            Expr::new(Span::new(6, 3), ExprKind::Int64(123)),
+                            Expr::new(Span::new(11, 4), ExprKind::Int64(4567)),
+                            Expr::new(
+                                Span::new(17, 8),
+                                ExprKind::Int64(89101112)
+                            ),
+                        ]
+                    )))]
+                )])
             );
             let mut stdout = Vec::<u8>::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(ast);
+            eval.eval_program(&ast);
             assert_eq!(stdout, b"123 4567 89101112\n");
+        }
+
+        #[test]
+        fn test_line_no() {
+            let text = b"10     PRINT 123, 4567 : PRINT 89101112";
+            let lexer = Tokenizer::new(text);
+            let mut parser = Parser::new(lexer);
+            let ast = parser.parse().expect("parse() errors");
+            assert_eq!(
+                ast,
+                Program::new(vec![Line::new(
+                    Some(10),
+                    vec![
+                        Statement::Print(PrintStatement::new(ArgList::new(
+                            vec![
+                                Expr::new(
+                                    Span::new(13, 3),
+                                    ExprKind::Int64(123)
+                                ),
+                                Expr::new(
+                                    Span::new(18, 4),
+                                    ExprKind::Int64(4567)
+                                ),
+                            ]
+                        ))),
+                        Statement::Print(PrintStatement::new(ArgList::new(
+                            vec![Expr::new(
+                                Span::new(31, 8),
+                                ExprKind::Int64(89101112)
+                            ),]
+                        )))
+                    ]
+                )])
+            );
+            let mut stdout = Vec::<u8>::new();
+            let mut eval = Evaluator::new(&mut stdout);
+            eval.eval_program(&ast);
+            assert_eq!(stdout, b"123 4567\n89101112\n");
         }
     }
 }

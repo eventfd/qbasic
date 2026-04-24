@@ -1,11 +1,12 @@
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
     pub span: Span,
 }
 
 impl Token {
-    pub fn new(kind: TokenKind, span: Span) -> Self {
+    #[inline(always)]
+    pub const fn new(kind: TokenKind, span: Span) -> Self {
         Self { kind, span }
     }
 }
@@ -27,18 +28,21 @@ pub enum TokenKind {
     String,
     Comma,
     Semicolon,
+    Colon,
     Eol,
     Eof,
+    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
-    pub offset: usize,
-    pub len: usize,
+    pub offset: u32,
+    pub len: u32,
 }
 
 impl Span {
-    pub fn new(offset: usize, len: usize) -> Self {
+    #[inline(always)]
+    pub const fn new(offset: u32, len: u32) -> Self {
         Self { offset, len }
     }
 }

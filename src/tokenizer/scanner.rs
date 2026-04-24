@@ -20,9 +20,9 @@ impl<'s> Tokenizer<'s> {
     }
 
     pub fn span_of(&self, span: Span) -> &'s [u8] {
-        self.buf
-            .get(span.offset..span.offset + span.len)
-            .unwrap_or_default()
+        let offset = span.offset as usize;
+        let len = span.len as usize;
+        self.buf.get(offset..offset + len).unwrap_or_default()
     }
 
     #[inline(always)]
@@ -31,19 +31,20 @@ impl<'s> Tokenizer<'s> {
     }
 
     #[inline(always)]
-    fn finish(&mut self, kind: TokenKind) -> Token {
-        self.end_span();
+    fn make_token(&mut self, kind: TokenKind) -> Token {
         Token::new(kind, self.span)
     }
 
     #[inline(always)]
     fn bump(&mut self) {
-        self.offset = self.buf.len().min(1 + self.offset);
+        if self.offset < self.buf.len() {
+            self.offset += 1;
+        }
     }
 
     #[inline]
-    fn peek(&self, ahead: usize) -> u8 {
-        *self.buf.get(self.offset + ahead).unwrap_or(&0)
+    fn peek(&self, ahead: usize) -> Option<u8> {
+        self.buf.get(self.offset + ahead).copied()
     }
 
     #[inline]
@@ -54,27 +55,36 @@ impl<'s> Tokenizer<'s> {
 
     #[inline(always)]
     fn begin_span(&mut self) {
-        self.span.offset = self.offset;
+        self.span.offset = self.offset as u32;
         self.span.len = 0;
     }
 
+    #[inline]
     fn skip_ws(&mut self) {
-        while matches!(self.peek(0), b'\t' | b'\x0C' | b'\r' | b' ') {
+        while let Some(b'\t' | b'\x0C' | b'\r' | b' ') = self.peek(0) {
             self.bump();
         }
     }
 
     #[inline(always)]
     fn end_span(&mut self) {
-        self.span.len = self.offset.saturating_sub(self.span.offset);
+        self.span.len = (self.offset as u32).saturating_sub(self.span.offset);
     }
 
-    fn classify_identifier(&self) -> TokenKind {
-        let text = self.span_of(self.span).to_ascii_lowercase();
-        match &*text {
+    fn classify_identifier(text: &[u8]) -> TokenKind {
+        macro_rules! g {
+            ($($l:expr => $e:expr),* $(,)?) => {
+                $(
+                    if text.eq_ignore_ascii_case($l) {
+                        return $e;
+                    } else
+                )*
+                { return TokenKind::Identifier; }
+            };
+        }
+        g! {
             b"print" => TokenKind::Keyword(Keyword::Print),
             b"input" => TokenKind::Keyword(Keyword::Input),
-            _ => TokenKind::Identifier,
         }
     }
 
@@ -82,27 +92,52 @@ impl<'s> Tokenizer<'s> {
         self.skip_ws();
         self.begin_span();
         if self.is_eof() {
-            return self.finish(TokenKind::Eof);
+            return self.make_token(TokenKind::Eof);
         }
         let ch = self.next();
         match ch {
             b'0'..=b'9' => {
-                while self.peek(0).is_ascii_digit() {
-                    self.next();
-                }
-                self.finish(TokenKind::Int64)
-            }
-            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
-                while matches!(self.peek(0), b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'0'..=b'9') {
-                    self.next();
+                while self
+                    .peek(0)
+                    .map(|e| e.is_ascii_digit())
+                    .unwrap_or_default()
+                {
+                    self.bump();
                 }
                 self.end_span();
-                self.finish(self.classify_identifier())
+                self.make_token(TokenKind::Int64)
             }
-            b';' => self.finish(TokenKind::Semicolon),
-            b',' => self.finish(TokenKind::Comma),
-            b'\n' => self.finish(TokenKind::Eol),
-            _ => todo!(),
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
+                while let Some(b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'0'..=b'9') =
+                    self.peek(0)
+                {
+                    self.bump();
+                }
+                self.end_span();
+                self.make_token(Self::classify_identifier(
+                    self.span_of(self.span),
+                ))
+            }
+            b';' => {
+                self.end_span();
+                self.make_token(TokenKind::Semicolon)
+            }
+            b',' => {
+                self.end_span();
+                self.make_token(TokenKind::Comma)
+            }
+            b':' => {
+                self.end_span();
+                self.make_token(TokenKind::Colon)
+            }
+            b'\n' => {
+                self.end_span();
+                self.make_token(TokenKind::Eol)
+            }
+            _ => {
+                self.end_span();
+                self.make_token(TokenKind::Error)
+            }
         }
     }
 }
