@@ -129,6 +129,10 @@ impl<'s> Tokenizer<'s> {
                 self.end_span();
                 self.make_token(TokenKind::Eol)
             }
+            b'=' => {
+                self.end_span();
+                self.make_token(TokenKind::Eq)
+            }
             _ => {
                 self.end_span();
                 self.make_token(TokenKind::Error)

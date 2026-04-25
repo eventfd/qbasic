@@ -31,6 +31,8 @@ pub enum TokenKind {
     Semicolon,
     Colon,
     Eol,
+    // operators
+    Eq,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]

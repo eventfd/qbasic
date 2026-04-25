@@ -5,12 +5,16 @@ use core::fmt::Debug;
 use core::str::FromStr;
 
 use crate::parser::ast::ArgList;
+use crate::parser::ast::Assignment;
 use crate::parser::ast::Expr;
 use crate::parser::ast::ExprKind;
+use crate::parser::ast::LValue;
 use crate::parser::ast::Line;
 use crate::parser::ast::PrintStatement;
 use crate::parser::ast::Program;
 use crate::parser::ast::Statement;
+use crate::parser::ast::SymbolId;
+use crate::parser::ast::SymbolTable;
 use crate::parser::error::ParseError;
 use crate::parser::error::ParseResult;
 use crate::tokenizer::Token;
@@ -23,6 +27,7 @@ pub struct Parser<'s> {
     curr: Token,
     peek: Token,
     errors: Vec<ParseError>,
+    symtab: SymbolTable,
 }
 
 impl<'s> Parser<'s> {
@@ -32,6 +37,7 @@ impl<'s> Parser<'s> {
             curr: Token::new(TokenKind::Eof, Default::default()),
             peek: Token::new(TokenKind::Eof, Default::default()),
             errors: Vec::new(),
+            symtab: SymbolTable::default(),
         };
         p.bump();
         p.bump();
@@ -62,6 +68,21 @@ impl<'s> Parser<'s> {
             Err(ParseError::new(
                 self.curr.span,
                 format!("Expected {:?}, Got {:?}", expected, self.curr.kind),
+            ))
+        }
+    }
+
+    fn expect_peek(&mut self, expected: TokenKind) -> ParseResult<()> {
+        if self.peek.kind == expected {
+            self.bump();
+            Ok(())
+        } else {
+            Err(ParseError::new(
+                self.curr.span,
+                format!(
+                    "Expected {:?} after {:?}. Got {:?}",
+                    expected, self.curr.kind, self.peek.kind
+                ),
             ))
         }
     }
@@ -126,8 +147,37 @@ impl<'s> Parser<'s> {
     }
 
     pub fn parse_statement(&mut self) -> ParseResult<Statement> {
+        match self.curr.kind {
+            TokenKind::Print => self.parse_print(),
+            _ => self.parse_assignment(),
+        }
+    }
+
+    fn parse_print(&mut self) -> ParseResult<Statement> {
         self.expect(TokenKind::Print)?;
-        Ok(Statement::Print(PrintStatement::new(self.parse_arglist()?)))
+        let args = self.parse_arglist()?;
+        Ok(Statement::Print(PrintStatement::new(args)))
+    }
+
+    fn parse_assignment(&mut self) -> ParseResult<Statement> {
+        let lvalue = self.parse_lvalue()?;
+        self.expect(TokenKind::Eq)?;
+        let rvalue = self.parse_expr()?;
+        Ok(Statement::Assign(Assignment::new(lvalue, rvalue)))
+    }
+
+    fn parse_lvalue(&mut self) -> ParseResult<LValue> {
+        // parse identifiers for now
+        let curr = self.curr;
+        self.expect(TokenKind::Identifier)?;
+        let text = core::str::from_utf8(self.tokenizer.span_of(curr.span))
+            .map_err(|_| {
+                ParseError::new(
+                    curr.span,
+                    format!("Expected identifier, got {:?}", curr.kind),
+                )
+            })?;
+        Ok(LValue::Identifier(SymbolId::new(text.into())))
     }
 
     fn parse_arglist(&mut self) -> ParseResult<ArgList> {
@@ -164,15 +214,27 @@ impl<'s> Parser<'s> {
     }
 
     fn parse_expr(&mut self) -> ParseResult<Expr> {
-        if self.curr.kind == TokenKind::Int64 {
-            let val = Expr::new(
+        match self.curr.kind {
+            TokenKind::Int64 => {
+                let val = self.parse_literal()?;
+                let val = Expr::new(self.curr.span, ExprKind::Int64(val));
+                self.bump();
+                Ok(val)
+            }
+            TokenKind::Identifier => {
+                let val = self.parse_literal()?;
+                let val = Expr::new(
+                    self.curr.span,
+                    ExprKind::Identifier(SymbolId::new(val)),
+                );
+                self.bump();
+                Ok(val)
+            }
+            kind => Err(ParseError::new(
                 self.curr.span,
-                ExprKind::Int64(self.parse_literal()?),
-            );
-            self.bump();
-            return Ok(val);
+                format!("parse_expr(kind: {:?}) - not implemented", kind,),
+            )),
         }
-        Err(ParseError::new(self.curr.span, "Not Implemented"))
     }
 
     pub fn errors(&self) -> &[ParseError] {
@@ -182,7 +244,7 @@ impl<'s> Parser<'s> {
 
 #[cfg(test)]
 mod tests {
-    mod print_statement {
+    mod print {
         use crate::eval::tree_walk::Evaluator;
         use crate::parser::Parser;
         use crate::parser::ast::ArgList;
@@ -202,7 +264,7 @@ mod tests {
             let lexer = Tokenizer::new(text);
             let mut parser = Parser::new(lexer);
             let ast = parser.parse();
-            assert_eq!(parser.errors(), &[]);
+            assert_eq!(parser.errors(), []);
             assert_eq!(
                 ast,
                 Program::new(vec![Line::new(
@@ -210,9 +272,10 @@ mod tests {
                     vec![Statement::Print(PrintStatement::new(vec![].into()))]
                 )],)
             );
-            let mut stdout = Vec::<u8>::new();
+            let mut stdout = Vec::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(&ast);
+            let eval_result = eval.eval_program(&ast);
+            assert_eq!(eval_result, Ok(()));
             assert_eq!(stdout, b"\n");
         }
 
@@ -222,7 +285,7 @@ mod tests {
             let lexer = Tokenizer::new(text);
             let mut parser = Parser::new(lexer);
             let ast = parser.parse();
-            assert_eq!(parser.errors(), &[]);
+            assert_eq!(parser.errors(), []);
             assert_eq!(
                 ast,
                 Program::new(vec![Line::new(
@@ -232,9 +295,10 @@ mod tests {
                     )))]
                 )])
             );
-            let mut stdout = Vec::<u8>::new();
+            let mut stdout = Vec::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(&ast);
+            let eval_result = eval.eval_program(&ast);
+            assert_eq!(eval_result, Ok(()));
             assert_eq!(stdout, b"123\n");
         }
 
@@ -244,7 +308,7 @@ mod tests {
             let lexer = Tokenizer::new(text);
             let mut parser = Parser::new(lexer);
             let ast = parser.parse();
-            assert_eq!(parser.errors(), &[]);
+            assert_eq!(parser.errors(), []);
             assert_eq!(
                 ast,
                 Program::new(vec![Line::new(
@@ -261,9 +325,10 @@ mod tests {
                     )))]
                 )])
             );
-            let mut stdout = Vec::<u8>::new();
+            let mut stdout = Vec::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(&ast);
+            let eval_result = eval.eval_program(&ast);
+            assert_eq!(eval_result, Ok(()));
             assert_eq!(stdout, b"123 4567 89101112\n");
         }
 
@@ -273,7 +338,7 @@ mod tests {
             let lexer = Tokenizer::new(text);
             let mut parser = Parser::new(lexer);
             let ast = parser.parse();
-            assert_eq!(parser.errors(), &[]);
+            assert_eq!(parser.errors(), []);
             assert_eq!(
                 ast,
                 Program::new(vec![Line::new(
@@ -300,9 +365,10 @@ mod tests {
                     ]
                 )])
             );
-            let mut stdout = Vec::<u8>::new();
+            let mut stdout = Vec::new();
             let mut eval = Evaluator::new(&mut stdout);
-            eval.eval_program(&ast);
+            let eval_result = eval.eval_program(&ast);
+            assert_eq!(eval_result, Ok(()));
             assert_eq!(stdout, b"123 4567\n89101112\n");
         }
 
@@ -347,6 +413,26 @@ mod tests {
                     ]
                 )])
             );
+        }
+    }
+
+    mod assignment {
+        use crate::eval::tree_walk::Evaluator;
+        use crate::parser::Parser;
+        use crate::tokenizer::Tokenizer;
+
+        #[test]
+        fn test_assign_basic() {
+            let text = b"10     X = 10 : PRINT 1234, 5678, X\n";
+            let lexer = Tokenizer::new(text);
+            let mut parser = Parser::new(lexer);
+            let ast = parser.parse();
+            assert_eq!(parser.errors(), []);
+            let mut stdout = Vec::new();
+            let mut eval = Evaluator::new(&mut stdout);
+            let eval_result = eval.eval_program(&ast);
+            assert_eq!(eval_result, Ok(()));
+            assert_eq!(stdout, b"1234 5678 10\n");
         }
     }
 }

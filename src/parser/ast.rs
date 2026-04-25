@@ -1,3 +1,7 @@
+use core::ops::Deref;
+use core::ops::DerefMut;
+use std::collections::BTreeMap;
+
 use crate::tokenizer::Span;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,8 +37,27 @@ impl Line {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub enum LValue {
+    Identifier(SymbolId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Statement {
     Print(PrintStatement),
+    Assign(Assignment),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Assignment {
+    pub lhs: LValue,
+    pub rhs: Expr,
+}
+
+impl Assignment {
+    #[inline(always)]
+    pub fn new(lhs: LValue, rhs: Expr) -> Self {
+        Self { lhs, rhs }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,9 +80,11 @@ impl ArgList {
     pub fn new(exprs: Vec<Expr>) -> Self {
         Self(exprs)
     }
+}
 
-    pub fn iter(&self) -> impl Iterator<Item = &Expr> {
-        self.0.iter()
+impl AsRef<[Expr]> for ArgList {
+    fn as_ref(&self) -> &[Expr] {
+        &self.0
     }
 }
 
@@ -90,4 +115,40 @@ impl Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ExprKind {
     Int64(i64),
+    Identifier(SymbolId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Symbol {
+    pub id: SymbolId,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+#[repr(transparent)]
+pub struct SymbolId(String);
+
+impl SymbolId {
+    #[inline(always)]
+    pub fn new(value: String) -> Self {
+        Self(value)
+    }
+}
+
+#[derive(Debug, Default)]
+#[repr(transparent)]
+pub struct SymbolTable(BTreeMap<SymbolId, Symbol>);
+
+impl Deref for SymbolTable {
+    type Target = BTreeMap<SymbolId, Symbol>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.0
+    }
+}
+
+impl DerefMut for SymbolTable {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.0
+    }
 }
