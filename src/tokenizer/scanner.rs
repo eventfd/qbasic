@@ -1,4 +1,3 @@
-use crate::tokenizer::Keyword;
 use crate::tokenizer::Span;
 use crate::tokenizer::Token;
 use crate::tokenizer::TokenKind;
@@ -19,10 +18,11 @@ impl<'s> Tokenizer<'s> {
         }
     }
 
+    #[inline]
     pub fn span_of(&self, span: Span) -> &'s [u8] {
-        let offset = span.offset as usize;
-        let len = span.len as usize;
-        self.buf.get(offset..offset + len).unwrap_or_default()
+        let start = span.start as usize;
+        let end = span.end as usize;
+        self.buf.get(start..end).unwrap_or_default()
     }
 
     #[inline(always)]
@@ -47,16 +47,10 @@ impl<'s> Tokenizer<'s> {
         self.buf.get(self.offset + ahead).copied()
     }
 
-    #[inline]
-    fn next(&mut self) -> u8 {
-        self.bump();
-        self.buf[self.offset - 1]
-    }
-
     #[inline(always)]
     fn begin_span(&mut self) {
-        self.span.offset = self.offset as u32;
-        self.span.len = 0;
+        self.span.start = self.offset as u32;
+        self.span.end = self.offset as u32;
     }
 
     #[inline]
@@ -68,7 +62,7 @@ impl<'s> Tokenizer<'s> {
 
     #[inline(always)]
     fn end_span(&mut self) {
-        self.span.len = (self.offset as u32).saturating_sub(self.span.offset);
+        self.span.end = self.offset as u32;
     }
 
     fn classify_identifier(text: &[u8]) -> TokenKind {
@@ -83,8 +77,8 @@ impl<'s> Tokenizer<'s> {
             };
         }
         g! {
-            b"print" => TokenKind::Keyword(Keyword::Print),
-            b"input" => TokenKind::Keyword(Keyword::Input),
+            b"print" => TokenKind::Print,
+            b"input" => TokenKind::Input,
         }
     }
 
@@ -94,7 +88,8 @@ impl<'s> Tokenizer<'s> {
         if self.is_eof() {
             return self.make_token(TokenKind::Eof);
         }
-        let ch = self.next();
+        let ch = self.peek(0).unwrap(); // unwrap is safe as we handled eof separately
+        self.bump();
         match ch {
             b'0'..=b'9' => {
                 while self
@@ -144,7 +139,6 @@ impl<'s> Tokenizer<'s> {
 
 #[cfg(test)]
 mod tests {
-    use crate::tokenizer::Keyword;
     use crate::tokenizer::Span;
     use crate::tokenizer::Token;
     use crate::tokenizer::TokenKind;
@@ -166,7 +160,7 @@ mod tests {
         assert_eq!(token, Token::new(TokenKind::Int64, Span::new(0, 6)));
         assert_eq!(tokenizer.span_of(token.span), b"123456");
         let token = tokenizer.next_token();
-        assert_eq!(token, Token::new(TokenKind::Eof, Span::new(6, 0)));
+        assert_eq!(token, Token::new(TokenKind::Eof, Span::new(6, 6)));
         assert_eq!(tokenizer.span_of(token.span), b"");
     }
 
@@ -177,7 +171,7 @@ mod tests {
         assert_eq!(token, Token::new(TokenKind::Identifier, Span::new(0, 11)));
         assert_eq!(tokenizer.span_of(token.span), b"hello_world");
         let token = tokenizer.next_token();
-        assert_eq!(token, Token::new(TokenKind::Eof, Span::new(11, 0)));
+        assert_eq!(token, Token::new(TokenKind::Eof, Span::new(11, 11)));
         assert_eq!(tokenizer.span_of(token.span), b"");
     }
 
@@ -185,16 +179,13 @@ mod tests {
     fn test_keywords() {
         let mut tokenizer = Tokenizer::new(b"PRINT     12345");
         let token = tokenizer.next_token();
-        assert_eq!(
-            token,
-            Token::new(TokenKind::Keyword(Keyword::Print), Span::new(0, 5))
-        );
+        assert_eq!(token, Token::new(TokenKind::Print, Span::new(0, 5)));
         assert_eq!(tokenizer.span_of(token.span), b"PRINT");
         let token = tokenizer.next_token();
-        assert_eq!(token, Token::new(TokenKind::Int64, Span::new(10, 5)));
+        assert_eq!(token, Token::new(TokenKind::Int64, Span::new(10, 15)));
         assert_eq!(tokenizer.span_of(token.span), b"12345");
         let token = tokenizer.next_token();
-        assert_eq!(token, Token::new(TokenKind::Eof, Span::new(15, 0)));
+        assert_eq!(token, Token::new(TokenKind::Eof, Span::new(15, 15)));
         assert_eq!(tokenizer.span_of(token.span), b"");
     }
 }

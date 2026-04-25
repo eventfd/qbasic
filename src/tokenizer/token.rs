@@ -1,3 +1,5 @@
+use core::fmt::Display;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Token {
     pub kind: TokenKind,
@@ -13,36 +15,39 @@ impl Token {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
-pub enum Keyword {
+pub enum TokenKind {
+    Eof,
+    Error,
+    // keywords
     Print,
     Input,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum TokenKind {
-    Keyword(Keyword),
+    // meta tags
     Identifier,
     Int64,
     Float64,
     String,
+    // separators
     Comma,
     Semicolon,
     Colon,
     Eol,
-    Eof,
-    Error,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub struct Span {
-    pub offset: u32,
-    pub len: u32,
+    pub start: u32,
+    pub end: u32,
 }
 
 impl Span {
     #[inline(always)]
-    pub const fn new(offset: u32, len: u32) -> Self {
-        Self { offset, len }
+    pub const fn new(start: u32, end: u32) -> Self {
+        Self { start, end }
+    }
+}
+
+impl Display for Span {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "[{}, {})", self.start, self.end)
     }
 }
